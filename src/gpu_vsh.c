@@ -181,8 +181,15 @@ char *gpu_vsh_hlsl(const uint32_t (*prog)[4], uint32_t count, uint32_t inputs)
         emit("O o;\n"
              "float w = r12.w == 0 ? 1 : r12.w, z = r12.z * vp.z;\n");
         /* half-pixel shift: NV2A pixel centres are integers, D3D11's are .5 (see VS_SRC in gpu_backend.c) */
-        emit("o.p = float4(((r12.x * aa.x + (%.4f)) * vp.x - 1) * w, (1 - (r12.y * aa.y + (%.4f)) * vp.y) * w, z * w, w);\n",
-             shift, shift);
+        emit("float sx = r12.x * aa.x + (%.4f), sy = r12.y * aa.y + (%.4f);\n", shift, shift);
+        /* XDK D3D adds 0.53125 to every screen position, so a full-screen quad the title draws from 0 (the
+         * fades) starts at 0.53: on hardware at 1x that leaves a sliver TV overscan hides, but rendered 2x or
+         * 3x the first one or two pixel rows and columns sit before it and keep the last frame -- a coloured
+         * line up the left side and across the top. The glow passes draw from exactly 0 and need no change.
+         * A vertex just inside the top or left edge is put on it; ordinary geometry moves under a pixel. */
+        emit("if (sx > 0 && sx < 0.6) sx = 0;\n"
+             "if (sy > 0 && sy < 0.6) sy = 0;\n"
+             "o.p = float4((sx * vp.x - 1) * w, (1 - sy * vp.y) * w, z * w, w);\n");
     }
     /* The clip w, interpolated perspective-correctly; the pixel shader writes depth from it when the
      * title w-buffers (SET_CONTROL0 Z_PERSPECTIVE_ENABLE), as NV2A does. */
