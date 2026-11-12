@@ -24,5 +24,8 @@
 #define IDC_IMPORT_BAR  1021
 #define IDC_GAMEFILES   1022
 #define IDC_GAME_STATUS 1023
+#define IDC_LANG        1024
+#define IDC_LANG_LBL    1025
+#define IDC_GAME_GROUP  1026
 
 #endif

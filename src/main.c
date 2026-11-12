@@ -85,9 +85,10 @@ extern ptrdiff_t g_xbox_mem_offset;
  * TODO: Set these from your xbe_parser output.
  * Run: py -3 -m tools.xbe_parser game/default.xbe
  */
-#define YOUR_GAME_ENTRY_POINT   0x0026D329  /* XBE entry point VA */
+#include "edition.h"
+#define YOUR_GAME_ENTRY_POINT   AHT_ENTRY_POINT  /* XBE entry point VA (edition.h) */
 #define YOUR_GAME_XBE_PATH      "H:/spyro-aht/game_files/default.xbe"
-#define YOUR_GAME_DIR            "H:/spyro-aht/game_files"
+#define YOUR_GAME_DIR            AHT_DEV_GAME_DIR
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -454,6 +455,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (!getenv("RECOMP_VIDEO_FLAGS"))
         _putenv_s("RECOMP_VIDEO_FLAGS", g_settings.widescreen ? "1" : "0");
     /* Audio init waits on the APU, and nothing is shown without the pushbuffer executor and its window. */
+#ifdef AHT_EU
+    /* The game's language, from the console's (XGetLanguage: 1 English,
+     * 3 German, 4 French, 5 Spanish, 6 Italian; Dutch, which the console
+     * cannot say, comes in as 9 Portuguese -- see AHT_LANG_TABLE_PT). */
+    if (!getenv("RECOMP_LANGUAGE")) {
+        static const char *const XC[LANGUAGE_COUNT] = { "1", "1", "4", "3", "5", "6", "9" };
+        _putenv_s("RECOMP_LANGUAGE", XC[settings_language_resolve(g_settings.language)]);
+    }
+#endif
     _putenv_s("RECOMP_AC97_READY", "1");
     _putenv_s("RECOMP_PB_EXEC", "1");
     if (getenv("RECOMP_GPU") && !strcmp(getenv("RECOMP_GPU"), "0")) {
@@ -502,6 +512,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     "game's files in the game_files folder next to this program.",
                     "Spyro: A Hero's Tail", MB_ICONERROR);
         return 1;
+    }
+    {
+        /* The other edition's game files: hand over to that edition's exe
+         * beside this one, so a shortcut to either keeps working. */
+        wchar_t wx[MAX_PATH], me[MAX_PATH], other[MAX_PATH], *slash;
+        int ed;
+        swprintf(wx, MAX_PATH, L"%hs\\default.xbe", s_game_dir);
+        ed = aht_xbe_edition(wx);
+#ifdef AHT_EU
+        if (ed == AHT_EDITION_US) {
+#else
+        if (ed == AHT_EDITION_EU) {
+#endif
+            STARTUPINFOW si = { sizeof si };
+            PROCESS_INFORMATION pi;
+            GetModuleFileNameW(NULL, me, MAX_PATH);
+            wcscpy(other, me);
+            slash = wcsrchr(other, L'\\');
+            wcscpy(slash ? slash + 1 : other, ed == AHT_EDITION_EU ? AHT_EXE_EU : AHT_EXE_US);
+            if (GetFileAttributesW(other) != INVALID_FILE_ATTRIBUTES
+                && CreateProcessW(other, GetCommandLineW(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                return 0;
+            }
+            MessageBoxA(NULL, ed == AHT_EDITION_EU
+                        ? "These game files are the European release, but its program (spyro_aht_recomp_eu.exe) is missing. Reinstall the port."
+                        : "These game files are the US release, but its program (spyro_aht_recomp.exe) is missing. Reinstall the port.",
+                        "Spyro: A Hero's Tail", MB_ICONERROR);
+            return 1;
+        }
     }
     {
         char xbe[MAX_PATH];
@@ -568,6 +609,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     printf("Initializing kernel bridge...\n");
     xbox_kernel_bridge_init();
 
+#ifdef AHT_EU
+    /* The game turns the console language into its own through a table of
+     * { XC_LANGUAGE, game language } pairs. The console has no Dutch, so the
+     * Portuguese entry (game language 6, which the disc lacks: English) is
+     * pointed at Dutch, 10 (the value the game's own Language menu uses). */
+    {
+        volatile uint8_t *lang = (volatile uint8_t *)((uintptr_t)g_xbox_mem_offset + AHT_LANG_TABLE_PT);
+        if (*(volatile uint32_t *)(lang - 4) == 9u && *lang == 6u)
+            *lang = 10u;
+        else
+            fprintf(stderr, "[lang] language table not as expected; Dutch unavailable\n");
+    }
+#endif
+
     /* D3D waits on the fence at *(device + 0x30) until it reaches device + 0x2C; 0x293908 holds the device
      * (ANB's 0x307408; found by matching the same XDK 5849 D3D code, tools\xbe_match.py, 42/42 agree). */
     {
@@ -575,7 +630,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         /* Off: the GPU backend names the semaphore to the executor instead (sem_target_check in gpu_backend.c),
          * so the fence reports real progress. RECOMP_FENCE_MIRROR=1 restores ANB's mirror. */
         if (getenv("RECOMP_FENCE_MIRROR"))
-            xbox_Nv2aMirrorFence(0x00293908u, 0x2Cu, 0x30u);
+            xbox_Nv2aMirrorFence(AHT_D3D_DEVICE_PTR, 0x2Cu, 0x30u);
         /* GetDisplayFieldStatus reads the vblank count at device + 0x1DE8; XMV paces its frames by it. ANB
          * needed a 60 Hz mirror of it because nothing delivered vblanks. Here RECOMP_VBLANK=paced runs D3D's
          * own ISR, which counts it already; with the mirror as well it ran at ~123 Hz, XMV thought it was

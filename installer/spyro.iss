@@ -8,7 +8,7 @@
 ;
 ;   G:\InnoSetup\ISCC.exe installer\spyro.iss      -> release\
 
-#define AppVersion "1.0.1"
+#define AppVersion "1.1.0"
 #define AppTitle "Spyro - A Hero's Tail"
 
 [Setup]
@@ -38,6 +38,9 @@ Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm
 
 [Files]
 Source: "..\build\spyro_aht_recomp.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The European release is its own recompilation; the launcher picks the exe
+; that matches the installed game files.
+Source: "..\build\spyro_aht_recomp_eu.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\spyro_launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "LICENSES.txt"; DestDir: "{app}"; Flags: ignoreversion
@@ -72,8 +75,8 @@ procedure InitializeWizard;
 begin
   SourcePage := CreateInputOptionPage(wpSelectDir,
     'Game files', 'Where is your copy of the game?',
-    'This port contains none of the game. Its files (about 900 MB) are copied from your own copy of ' +
-    'Spyro: A Hero''s Tail for the original Xbox.',
+    'This port contains none of the game. Its files (about 900 MB, or 1.6 GB for the European release) are copied ' +
+    'from your own copy of Spyro: A Hero''s Tail for the original Xbox, US or European.',
     True, False);
   SourcePage.Add('From a folder with the game''s files, or the disc in a drive that can read it');
   SourcePage.Add('From an Xbox disc image (.iso, full or trimmed)');

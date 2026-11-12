@@ -33,10 +33,10 @@
 #include <wchar.h>
 
 #include "import.h"
+#include "edition.h"
 #include "launcher_res.h"
 
-/* SHA-1 of the default.xbe this build was recompiled from. */
-static const char XBE_SHA1[] = "4f1658aac4a644b7b3db3abf31663f38882e9520";
+/* The default.xbe of either edition this port was recompiled from (edition.h). */
 #define SECTOR 2048u
 #define WM_IMPORT_PROGRESS (WM_APP + 1)
 #define WM_IMPORT_DONE     (WM_APP + 2)
@@ -50,10 +50,13 @@ typedef struct {
 typedef struct {
     /* in */
     wchar_t src[MAX_PATH], dest[MAX_PATH];
+    int flags;                  /* IMPORT_QUIET, IMPORT_SETUP */
+    int installed;              /* AHT_EDITION_* already in dest */
     HWND dlg;
     volatile LONG cancel;
     /* out */
     int result;
+    int edition;                /* AHT_EDITION_* of the copy */
     wchar_t message[512];
     /* work */
     HANDLE image;               /* NULL: a folder */
@@ -251,26 +254,60 @@ static int stream(Job *j, const Entry *e, HANDLE out, BCRYPT_HASH_HANDLE hash)
     return ret;
 }
 
-static int xbe_matches(Job *j, const Entry *xbe)
+/* The release the copy's default.xbe is (AHT_EDITION_*), from its SHA-1:
+ * AHT_EDITION_UNKNOWN for any other version. */
+static int xbe_edition(Job *j, const Entry *xbe)
 {
     BCRYPT_ALG_HANDLE alg;
     BCRYPT_HASH_HANDLE hash;
     uint8_t digest[20];
     char hex[41];
-    int ok = 0, i;
+    int ed = AHT_EDITION_UNKNOWN, i;
 
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA1_ALGORITHM, NULL, 0) != 0)
-        return 1;           /* cannot check: let the game decide */
+        return AHT_EDITION_US;      /* cannot check: let the game decide */
     if (BCryptCreateHash(alg, &hash, NULL, 0, NULL, 0, 0) == 0) {
         if (stream(j, xbe, NULL, hash) > 0 && BCryptFinishHash(hash, digest, sizeof digest, 0) == 0) {
             for (i = 0; i < 20; i++)
                 sprintf(hex + i * 2, "%02x", digest[i]);
-            ok = !strcmp(hex, XBE_SHA1);
+            ed = !strcmp(hex, AHT_XBE_SHA1_US) ? AHT_EDITION_US
+               : !strcmp(hex, AHT_XBE_SHA1_EU) ? AHT_EDITION_EU : AHT_EDITION_UNKNOWN;
         }
         BCryptDestroyHash(hash);
     }
     BCryptCloseAlgorithmProvider(alg, 0);
-    return ok;
+    return ed;
+}
+
+/* Empties a folder of the game's files (everything below `dir`, which
+ * stays). Only ever the port's own game folder, when Setup changes release. */
+static void empty_dir(const wchar_t *dir)
+{
+    wchar_t pat[MAX_PATH], p[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE f;
+    swprintf(pat, MAX_PATH, L"%ls\\*", dir);
+    f = FindFirstFileW(pat, &fd);
+    if (f == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L".."))
+            continue;
+        swprintf(p, MAX_PATH, L"%ls\\%ls", dir, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                RemoveDirectoryW(p);        /* a link: never follow it */
+            else
+                DeleteFileW(p);
+        } else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            empty_dir(p);
+            RemoveDirectoryW(p);
+        } else {
+            SetFileAttributesW(p, FILE_ATTRIBUTE_NORMAL);
+            DeleteFileW(p);
+        }
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
 }
 
 static int make_dirs(const wchar_t *path)
@@ -333,12 +370,28 @@ static DWORD WINAPI worker(LPVOID arg)
         goto done;
     }
     SetDlgItemTextW(j->dlg, IDC_IMPORT_TEXT, L"Checking the game's version...");
-    if (!xbe_matches(j, xbe)) {
+    j->edition = xbe_edition(j, xbe);
+    if (j->edition == AHT_EDITION_UNKNOWN) {
         j->result = IMPORT_WRONG_VERSION;
         wcscpy(j->message, L"This is a different version of the game than the one this port was made from "
-                           L"(Spyro: A Hero's Tail for the original Xbox, title VU-052, "
-                           L"version 1). Other versions do not work with it.");
+                           L"(Spyro: A Hero's Tail for the original Xbox, title VU-052, the US "
+                           L"or European release). Other versions do not work with it.");
         goto done;
+    }
+    if (j->installed != AHT_EDITION_UNKNOWN && j->edition != j->installed) {
+        if (!(j->flags & IMPORT_SETUP)) {
+            j->result = IMPORT_WRONG_VERSION;
+            swprintf(j->message, 512, L"This is the %ls release of the game, but the %ls release is installed. "
+                                      L"To change to the %ls release, run Setup again and choose this copy.",
+                     j->edition == AHT_EDITION_EU ? L"European" : L"US",
+                     j->installed == AHT_EDITION_EU ? L"European" : L"US",
+                     j->edition == AHT_EDITION_EU ? L"European" : L"US");
+            goto done;
+        }
+        /* Setup changing release: the old release's files go first, so the
+         * two never mix (the European disc has files the US one lacks). */
+        SetDlgItemTextW(j->dlg, IDC_IMPORT_TEXT, L"Removing the other release's game files...");
+        empty_dir(j->dest);
     }
     if (GetDiskFreeSpaceExW(j->dest, &avail, NULL, NULL) && avail.QuadPart < j->total + (64u << 20)) {
         swprintf(j->message, 512, L"There is not enough free space: the game needs %.1f GB.",
@@ -411,7 +464,7 @@ static INT_PTR CALLBACK import_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
     return FALSE;
 }
 
-int import_game(HWND parent, const wchar_t *src, const wchar_t *dest, int quiet)
+int import_game(HWND parent, const wchar_t *src, const wchar_t *dest, int flags)
 {
     Job *j = (Job *)calloc(1, sizeof *j);
     int result;
@@ -419,12 +472,19 @@ int import_game(HWND parent, const wchar_t *src, const wchar_t *dest, int quiet)
         return IMPORT_FAILED;
     wcsncpy(j->src, src, MAX_PATH - 1);
     wcsncpy(j->dest, dest, MAX_PATH - 1);
+    j->flags = flags;
+    {
+        wchar_t x[MAX_PATH];
+        swprintf(x, MAX_PATH, L"%ls\\default.xbe", dest);
+        j->installed = aht_xbe_edition(x);
+    }
     CreateDirectoryW(dest, NULL);
     DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_IMPORT), parent, import_proc, (LPARAM)j);
     result = j->result;
-    if (result == IMPORT_OK && !quiet)
-        MessageBoxW(parent, L"The game files are installed.", L"Spyro: A Hero's Tail",
-                    MB_ICONINFORMATION);
+    if (result == IMPORT_OK && !(flags & IMPORT_QUIET))
+        MessageBoxW(parent, j->edition == AHT_EDITION_EU ? L"The game files (European release) are installed."
+                                                         : L"The game files (US release) are installed.",
+                    L"Spyro: A Hero's Tail", MB_ICONINFORMATION);
     else if (result != IMPORT_OK && result != IMPORT_CANCELLED)
         MessageBoxW(parent, j->message, L"Installing the game files", MB_ICONERROR);
     free(j);

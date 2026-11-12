@@ -23,6 +23,7 @@
 #include <string.h>
 #include "kernel/nv2a_backend.h"
 #include "settings.h"
+#include "edition.h"
 #include "prompts.h"
 
 extern void xbox_FileWritesSettle(DWORD quiet_ms, DWORD max_ms);
@@ -2177,7 +2178,7 @@ static void sem_target_check(void)
     if (done || getenv("RECOMP_FENCE_MIRROR"))
         return;
     mem = (uint8_t *)xbox_GetMemoryOffset();
-    dev = *(volatile uint32_t *)(mem + 0x293908u);
+    dev = *(volatile uint32_t *)(mem + AHT_D3D_DEVICE_PTR);
     if (dev < 0x10000u)
         return;
     sem = *(volatile uint32_t *)(mem + dev + 0x30u);

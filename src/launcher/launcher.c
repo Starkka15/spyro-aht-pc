@@ -17,8 +17,7 @@
 #include "settings.h"
 #include "launcher_res.h"
 #include "import.h"
-
-#define GAME_EXE L"spyro_aht_recomp.exe"
+#include "edition.h"
 
 static SpyroSettings s_defaults;
 
@@ -167,6 +166,18 @@ static void show(HWND dlg, const SpyroSettings *s, const MouseSettings *m)
     show_sens(dlg);
     CheckDlgButton(dlg, IDC_INVERT, m->invert ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, IDC_SKIP, s->skip_intros ? BST_CHECKED : BST_UNCHECKED);
+    {
+        /* Accented letters as escapes: the compiler reads this file as cp1252. */
+        static const wchar_t *const names[LANGUAGE_COUNT] = {
+            L"Auto (follows Windows)", L"English", L"Fran\u00E7ais (French)", L"Deutsch (German)",
+            L"Espa\u00F1ol (Spanish)", L"Italiano (Italian)", L"Nederlands (Dutch)",
+        };
+        int i;
+        SendDlgItemMessageW(dlg, IDC_LANG, CB_RESETCONTENT, 0, 0);
+        for (i = 0; i < LANGUAGE_COUNT; i++)
+            add_item(dlg, IDC_LANG, names[i], i);
+        select_data(dlg, IDC_LANG, s->language);
+    }
     select_data(dlg, IDC_MODE, s->fullscreen);
     fill_sizes(dlg, s->window_width, s->window_height);
     CheckDlgButton(dlg, IDC_WIDE, s->widescreen ? BST_CHECKED : BST_UNCHECKED);
@@ -193,6 +204,7 @@ static void save(HWND dlg)
     s.vsync = IsDlgButtonChecked(dlg, IDC_VSYNC) == BST_CHECKED;
     s.keyboard_mouse = IsDlgButtonChecked(dlg, IDC_MKB) == BST_CHECKED;
     s.skip_intros = IsDlgButtonChecked(dlg, IDC_SKIP) == BST_CHECKED;
+    s.language = (int)selected_data(dlg, IDC_LANG);
 
     settings_set_int("Fullscreen", s.fullscreen);
     settings_set_int("WindowWidth", s.window_width);
@@ -202,6 +214,7 @@ static void save(HWND dlg)
     settings_set_int("VSync", s.vsync);
     settings_set_int("KeyboardMouse", s.keyboard_mouse);
     settings_set_int("SkipIntros", s.skip_intros);
+    settings_set_str("Language", settings_language_name(s.language));
     g_settings = s;
     {
         char v[16];
@@ -253,11 +266,68 @@ static int game_present(void)
 #endif
 }
 
+/* Which edition the installed game files are (edition.h): the European one
+ * has six languages, the US one English only. */
+static int game_edition(void)
+{
+    wchar_t d[MAX_PATH], x[MAX_PATH];
+    int ed;
+    game_dir(d);
+    swprintf(x, MAX_PATH, L"%ls\\default.xbe", d);
+    ed = aht_xbe_edition(x);
+#ifdef SPYRO_DEV_GAME_DIR
+    if (ed == AHT_EDITION_UNKNOWN)
+        ed = aht_xbe_edition(L"" SPYRO_DEV_GAME_DIR L"\\default.xbe");
+#endif
+    return ed;
+}
+
+/* Moves a control down by dy dialog units. */
+static void move_by(HWND dlg, int id, int dy)
+{
+    HWND c = GetDlgItem(dlg, id);
+    RECT r;
+    if (!c)
+        return;
+    GetWindowRect(c, &r);
+    MapWindowPoints(HWND_DESKTOP, dlg, (POINT *)&r, 2);
+    SetWindowPos(c, NULL, r.left, r.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+/* The Language row only for the European edition; without it the rest of
+ * the window closes up. */
+static void show_language_row(HWND dlg, int want)
+{
+    static int shown = 1;           /* as laid out in launcher.rc */
+    static const int BELOW[] = { IDC_SKIP, IDC_GAME_STATUS, IDC_GAMEFILES, IDC_SAVES, IDC_DEFAULTS,
+                                 IDOK, IDC_SAVE, IDCANCEL };
+    RECT u = { 0, 0, 1, 18 }, g, w;
+    int dy, i;
+    HWND grp = GetDlgItem(dlg, IDC_GAME_GROUP);
+    if (!want == !shown)
+        return;
+    MapDialogRect(dlg, &u);
+    dy = want ? u.bottom : -u.bottom;
+    ShowWindow(GetDlgItem(dlg, IDC_LANG_LBL), want ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(dlg, IDC_LANG), want ? SW_SHOW : SW_HIDE);
+    for (i = 0; i < (int)(sizeof BELOW / sizeof *BELOW); i++)
+        move_by(dlg, BELOW[i], dy);
+    GetWindowRect(grp, &g);
+    SetWindowPos(grp, NULL, 0, 0, g.right - g.left, g.bottom - g.top + dy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    GetWindowRect(dlg, &w);
+    SetWindowPos(dlg, NULL, 0, 0, w.right - w.left, w.bottom - w.top + dy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    InvalidateRect(dlg, NULL, TRUE);
+    shown = want;
+}
+
 static void show_game_status(HWND dlg)
 {
-    int ok = game_present();
-    SetDlgItemTextW(dlg, IDC_GAME_STATUS, ok ? L"Game files: installed" : L"Game files: not installed yet");
+    int ok = game_present(), ed = ok ? game_edition() : AHT_EDITION_UNKNOWN;
+    SetDlgItemTextW(dlg, IDC_GAME_STATUS, !ok ? L"Game files: not installed yet"
+                                         : ed == AHT_EDITION_EU ? L"Game files: installed (European)"
+                                         : L"Game files: installed (US)");
     SetDlgItemTextW(dlg, IDC_GAMEFILES, ok ? L"Reinstall game files..." : L"Install game files...");
+    show_language_row(dlg, ed == AHT_EDITION_EU);
 }
 
 /* A folder or disc drive (pick_folder) or a disc image file. */
@@ -322,7 +392,7 @@ static void install_game_files(HWND dlg)
     if (!pick(dlg, choice == 100, src))
         return;
     game_dir(dest);
-    import_game(dlg, src, dest, 0);
+    import_game(dlg, src, dest, 0);         /* keeps to the installed release */
     show_game_status(dlg);
 }
 
@@ -339,7 +409,7 @@ static int play(HWND dlg)
         if (!game_present())
             return 0;
     }
-    beside_exe(exe, MAX_PATH, GAME_EXE);
+    beside_exe(exe, MAX_PATH, game_edition() == AHT_EDITION_EU ? AHT_EXE_EU : AHT_EXE_US);
     wcscpy(dir, exe);
     slash = wcsrchr(dir, L'\\');
     if (slash)
@@ -440,7 +510,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show_cmd)
     if (argv && argc >= 3 && !_wcsicmp(argv[1], L"/import")) {
         wchar_t dest[MAX_PATH];
         game_dir(dest);
-        return import_game(NULL, argv[2], dest, 1);
+        return import_game(NULL, argv[2], dest, IMPORT_QUIET | IMPORT_SETUP);
     }
     s_defaults = g_settings;
     settings_load();

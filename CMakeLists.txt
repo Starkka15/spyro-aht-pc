@@ -50,7 +50,12 @@ add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)
 # without a manual re-configure. A plain GLOB is evaluated once at configure
 # time, so a newly generated file (an extra chunk, recomp_stubs_unresolved.c)
 # is silently left out of the build and shows up as unresolved externals.
-file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
+# One game executable per edition (src/edition.h): each is the recompilation of
+# that edition's default.xbe, generated into its own folder.
+#   spyro_aht_recomp      US       src/recomp/gen
+#   spyro_aht_recomp_eu   Europe   src/recomp/gen_eu   (AHT_EU)
+function(aht_game TARGET GEN_DIR)
+file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${GEN_DIR}/*.c")
 
 # Core game sources
 set(GAME_SOURCES
@@ -73,24 +78,25 @@ set(GAME_SOURCES
 #   src/recomp/recomp_dispatch.h     - binary search dispatch table
 #   src/recomp/recomp_types.h        - register model, ICALL macros, MEM helpers
 
-add_executable(${PROJECT_NAME} WIN32
+add_executable(${TARGET} WIN32
     ${GAME_SOURCES}
     ${RECOMP_GEN_SOURCES}
 )
 
 # Link against the xboxrecomp umbrella target (all 6 runtime libraries)
-target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)
+target_link_libraries(${TARGET} PRIVATE xboxrecomp)
 
 # Include paths for generated recomp headers
-target_include_directories(${PROJECT_NAME} PRIVATE
+target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/recomp
+    ${CMAKE_CURRENT_SOURCE_DIR}/${GEN_DIR}
     ${XBOXRECOMP_DIR}/include
     ${XBOXRECOMP_DIR}/src/input
 )
 
 # Windows SDK libraries needed at link time
-target_link_libraries(${PROJECT_NAME} PRIVATE
+target_link_libraries(${TARGET} PRIVATE
     d3d11
     dxgi
     dxguid
@@ -104,11 +110,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 # MSVC-specific: large address aware, increase section limit for big generated files
 if(MSVC)
-    target_link_options(${PROJECT_NAME} PRIVATE
+    target_link_options(${TARGET} PRIVATE
         /LARGEADDRESSAWARE
     )
     # The generated code files can be very large. Increase object file section limit.
-    target_compile_options(${PROJECT_NAME} PRIVATE /bigobj)
+    target_compile_options(${TARGET} PRIVATE /bigobj)
+endif()
+
+endfunction()
+
+aht_game(${PROJECT_NAME} src/recomp/gen)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp/gen_eu/recomp_funcs.h")
+    aht_game(spyro_aht_recomp_eu src/recomp/gen_eu)
+    target_compile_definitions(spyro_aht_recomp_eu PRIVATE AHT_EU=1)
 endif()
 
 # ── Game-specific additions ─────────────────────────────────────

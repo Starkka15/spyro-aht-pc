@@ -10,9 +10,18 @@ emulator.
 > you feel up to it, feel free to continue the work; forks and pull requests are welcome.
 
 **This repository contains none of the game.** You need your own copy of
-Spyro: A Hero's Tail for the original Xbox (USA, title VU-052, version 1).
+Spyro: A Hero's Tail for the original Xbox (title VU-052), either release:
+
+| Release | XBE version | Languages |
+| --- | --- | --- |
+| USA | 1 | English |
+| Europe | 2 | English, French, German, Spanish, Italian, Dutch |
+
 Setup copies the game's files from a folder, a disc drive, or an Xbox disc
-image (.iso, full or trimmed) and checks the version first.
+image (.iso, full or trimmed) and checks the version first. Each release is
+its own recompilation (`spyro_aht_recomp.exe`, `spyro_aht_recomp_eu.exe`);
+the launcher starts the one that matches the installed files and, for the
+European release, offers the language.
 
 > **Early release.** The opening and Dragon Village have been played. Expect
 > bugs later in the game; reports are welcome in Issues (set `Log = 1` in
@@ -27,7 +36,7 @@ Windows 10 or 11 (64-bit) with a DirectX 11 graphics card.
 - Keyboard and mouse or any XInput controller. Keys can be changed in
   `mkb.ini`; the on-screen prompts always show the controller's buttons.
 - The launcher sets fullscreen, window size, render scale, widescreen, VSync
-  and skipping the logo movies.
+  and skipping the logo movies, and the language for the European release.
 
 See [installer/README.txt](installer/README.txt) for the full player notes,
 including the key for each controller button.
@@ -50,12 +59,19 @@ and your own copy of the game.
    py -3 -m tools.recomp   <port>/game_files/default.xbe --all --split 250 --gen-dir <port>/src/recomp/gen
    ```
 
-4. `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo` then
+4. For the European release as well, put its files in a folder of their own
+   and generate its code into `src/recomp/gen_eu` the same way, with
+   `tools/seeds_eu.json` (if `disasm` asks for it, run
+   `py -3 -m tools.xbe_parser <xbe> --json <file>` first and pass
+   `--analysis-json <file>`). CMake builds `spyro_aht_recomp_eu.exe` when
+   that folder exists; its addresses are in `src/edition.h`.
+5. `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo` then
    `cmake --build build`.
-5. Optional: `ISCC installer\spyro.iss` (Inno Setup 6) builds Setup.
+6. Optional: `ISCC installer\spyro.iss` (Inno Setup 6) builds Setup. It
+   ships both game exes, so build both first.
 
 The generated code is the game's code translated, so it is never committed:
-`src/recomp/gen/` stays local.
+`src/recomp/gen/` and `src/recomp/gen_eu/` stay local.
 
 ## Credits and licenses
 

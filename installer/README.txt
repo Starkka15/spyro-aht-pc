@@ -6,9 +6,12 @@ recompilation: the Xbox program is translated into PC code ahead of time, so
 the game runs directly instead of in an emulator.
 
 This port contains none of the game. It needs your own copy of Spyro: A
-Hero's Tail for the original Xbox (USA, title VU-052, version 1). Setup copies
-the game's files from it: a folder with the game's files, the disc in a drive
-that can read it, or an Xbox disc image (.iso, full or trimmed).
+Hero's Tail for the original Xbox (title VU-052), the US or the European
+release. Setup copies the game's files from it: a folder with the game's
+files, the disc in a drive that can read it, or an Xbox disc image (.iso, full
+or trimmed). The launcher shows which release is installed and starts the
+matching program. To change to the other release, run Setup again and choose
+that copy; it replaces the installed game files (saves are kept).
 
 This is an early release: the opening of the game and Dragon Village have been
 played, so expect bugs further in. Reports are welcome at
@@ -64,6 +67,11 @@ The launcher writes spyro.ini beside the game. You can edit it by hand too:
                               matches your monitor
   VSync                       no tearing, slightly more input lag
   Skip intro movies           skips the Eurocom and Vivendi logos
+  Language                    European release only: English, French,
+                              German, Spanish, Italian or Dutch, for text
+                              and voices. Auto follows the Windows display
+                              language (English if the game lacks it). The
+                              US release is English only.
   Log                         write spyro.log, for bug reports
 
 

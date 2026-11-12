@@ -18,14 +18,25 @@ typedef struct {
     int widescreen;         /* the game's own 16:9 mode */
     int keyboard_mouse;     /* keyboard and mouse act as player 1 */
     int skip_intros;        /* straight to the title screen, no logo movies */
+    int language;           /* LANGUAGE_*: European edition only (edition.h) */
     int log;                /* write spyro.log beside the game */
 } SpyroSettings;
 
 extern SpyroSettings g_settings;
 
+/* The European edition's languages. Auto follows Windows' display language
+ * and falls back to English. The US edition is English only. */
+enum { LANGUAGE_AUTO, LANGUAGE_ENGLISH, LANGUAGE_FRENCH, LANGUAGE_GERMAN,
+       LANGUAGE_SPANISH, LANGUAGE_ITALIAN, LANGUAGE_DUTCH, LANGUAGE_COUNT };
+/* The spyro.ini spelling of a LANGUAGE_* ("Auto", "English", ...). */
+const char *settings_language_name(int language);
+/* LANGUAGE_AUTO resolved to the language it stands for. */
+int settings_language_resolve(int language);
+
 void settings_load(void);
 /* Writes one key back to the file, keeping everything else in it. */
 void settings_set_int(const char *key, int value);
+void settings_set_str(const char *key, const char *value);
 
 /* mkb.ini, the keyboard and mouse layout beside the .exe: written with the
  * game's layout when missing, and read by the runtime's input layer. */

@@ -10,5 +10,6 @@
 !/res/
 !/tools/
 /src/recomp/gen/
+/src/recomp/gen_eu/
 __pycache__/
 /res/*.png
