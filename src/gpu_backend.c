@@ -701,6 +701,7 @@ static void gpu_init(void)
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
     rd.DepthClipEnable = FALSE;
+    rd.ScissorEnable = TRUE;            /* the window clip, set_scissor; every state below copies this */
     CHECK(ID3D11Device_CreateRasterizerState(s_dev, &rd, &s_raster));
 
     memset(&sm, 0, sizeof sm);
@@ -1954,6 +1955,51 @@ static void dump_draw(const Target *rt, const Depth *ds, const Nv2aBatch *b)
     }
 }
 
+/* The surface clip and the window clip as one scissor rectangle, in target pixels, as xemu scissors.
+ * The surface clip's origin is the part that matters so far: Moneybags' shop narrows the surface clip to
+ * his portrait box while drawing him, and without it he stood over the item text. The window clip (type 0,
+ * draw inside) narrows it further; type 1 (draw outside) is not modelled and leaves it alone. */
+static D3D11_RECT s_sc_last = { -1, -1, -1, -1 };   /* the scissor bound now; gpu_flip resets it */
+
+static void set_scissor(const Target *rt, const Nv2aRenderState *r)
+{
+    D3D11_RECT last = s_sc_last;
+    LONG w = (LONG)(rt->lw * s_scale), h = (LONG)(rt->lh * s_scale);
+    D3D11_RECT sc = { 0, 0, w, h };
+
+    /* The surface clip, offset included (the target's size comes from its width and height alone). */
+    if (r->surface_clip_w && r->surface_clip_h) {
+        LONG x0 = (LONG)r->surface_clip_x * (LONG)s_scale, y0 = (LONG)r->surface_clip_y * (LONG)s_scale;
+        LONG x1 = x0 + (LONG)r->surface_clip_w * (LONG)s_scale, y1 = y0 + (LONG)r->surface_clip_h * (LONG)s_scale;
+        if (x0 < w && y0 < h) {
+            sc.left = x0;
+            sc.top = y0;
+            sc.right = x1 < w ? x1 : w;
+            sc.bottom = y1 < h ? y1 : h;
+        }
+    }
+    if ((r->window_clip_h || r->window_clip_v) && !(r->window_clip_type & 1)) {
+        LONG x0 = (LONG)(r->window_clip_h & 0xFFF), x1 = (LONG)((r->window_clip_h >> 16) & 0xFFF) + 1;
+        LONG y0 = (LONG)(r->window_clip_v & 0xFFF), y1 = (LONG)((r->window_clip_v >> 16) & 0xFFF) + 1;
+        if (x1 > x0 && y1 > y0) {
+            if (x0 * (LONG)s_scale > sc.left) sc.left = x0 * (LONG)s_scale;
+            if (y0 * (LONG)s_scale > sc.top) sc.top = y0 * (LONG)s_scale;
+            if (x1 * (LONG)s_scale < sc.right) sc.right = x1 * (LONG)s_scale;
+            if (y1 * (LONG)s_scale < sc.bottom) sc.bottom = y1 * (LONG)s_scale;
+            if (sc.right < sc.left) sc.right = sc.left;
+            if (sc.bottom < sc.top) sc.bottom = sc.top;
+        }
+    }
+    if (memcmp(&sc, &last, sizeof sc)) {
+        static int shown;
+        if ((sc.left || sc.top || sc.right != w || sc.bottom != h) && shown++ < 16)
+            fprintf(stderr, "[gpu] scissor %ld,%ld..%ld,%ld on %08X (%ux%u)\n", sc.left, sc.top, sc.right,
+                    sc.bottom, rt->va, rt->lw, rt->lh);
+        ID3D11DeviceContext_RSSetScissorRects(s_ctx, 1, &sc);
+        s_sc_last = sc;
+    }
+}
+
 static void gpu_draw_on(Target *rt, Depth *ds, const Nv2aBatch *b)
 {
     const Nv2aRenderState *r = b->state;
@@ -1973,6 +2019,7 @@ static void gpu_draw_on(Target *rt, Depth *ds, const Nv2aBatch *b)
     else
         bind_common();
     bind_targets(rt, ds);
+    set_scissor(rt, r);
     rt->dbg_draws++; rt->dbg_tris += (b->program ? b->program->nindices : b->count) / 3; /* DBG */
     if (s_dump) dump_draw(rt, ds, b);
     rt->frame = s_frame;
@@ -2367,6 +2414,11 @@ static void gpu_flip(void)
         vp.MinDepth = 0;
         vp.MaxDepth = 1;
         ID3D11DeviceContext_RSSetViewports(s_ctx, 1, &vp);
+        {
+            D3D11_RECT all = { 0, 0, rc.right, rc.bottom };
+            ID3D11DeviceContext_RSSetScissorRects(s_ctx, 1, &all);
+            s_sc_last.left = -1;                /* the next draw sets its own */
+        }
         CHECK(ID3D11DeviceContext_Map(s_ctx, (ID3D11Resource *)s_ps_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &m));
         u = (float *)m.pData;
         u[0] = u[1] = 1.0f;

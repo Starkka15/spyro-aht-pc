@@ -8,7 +8,7 @@
 ;
 ;   G:\InnoSetup\ISCC.exe installer\spyro.iss      -> release\
 
-#define AppVersion "1.1.0"
+#define AppVersion "1.1.1"
 #define AppTitle "Spyro - A Hero's Tail"
 
 [Setup]
